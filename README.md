@@ -6,7 +6,7 @@ official **haxball.com replayer**. The reply is an embed whose title is the link
 > **Пряме посилання для перегляду повтору**
 
 - **Right-click a message with an `.hbr2` file → Apps → Watch replay.** Works in any server or DM.
-- **Auto mode (optional):** the bot replies to every new `.hbr2` file in your replay channels by itself,
+- **Auto mode (optional):** the bot posts a link for every new `.hbr2` file in your replay channels by itself,
   usually within a few seconds.
 
 **No server needed.** The bot runs on Cloudflare Workers' free plan. Nothing has to stay on, your PC included.
@@ -97,7 +97,8 @@ Adding the bot to your account means you can use it everywhere, even in servers 
 
 ### 7. (Optional) Auto mode
 
-The bot replies to every new `.hbr2` file in chosen channels without anyone clicking anything.
+The bot posts a link for every new `.hbr2` file in chosen channels without anyone clicking anything.
+It sends a normal message right after the upload, not a reply.
 
 1. Open the second link printed in step 6, **Add to a server**, and pick your server.
    You need the *Manage Server* permission there. If the replay channel is private,
@@ -117,7 +118,7 @@ The bot replies to every new `.hbr2` file in chosen channels without anyone clic
    npm run deploy
    ```
 
-Now post a replay in that channel. Within a few seconds the bot replies to it with the link.
+Now post a replay in that channel. Within a few seconds the bot posts the link.
 
 ---
 
@@ -139,8 +140,8 @@ haxball.com opens its replayer and downloads the replay from the address after t
 - **Auto mode:** Cloudflare can start the bot at most once a minute, so each run keeps checking the
   auto-mode channels every 5 seconds for 55 seconds. Replies usually take under 5 seconds, and up to
   about 10 seconds around the moment one run hands over to the next. A run's first check reads the last
-  50 messages and replies to `.hbr2` files from the last 10 minutes that haven't been answered yet,
-  so if a run fails, the next one catches up. With several auto-mode channels, each one is checked less often
+  50 messages and posts links for `.hbr2` files from the last 10 minutes that it hasn't linked yet.
+  It recognizes those by the links in its own messages. If a run fails, the next one catches up. With several auto-mode channels, each one is checked less often
   (every 10 seconds for two channels, every 15 for three) to stay within the free plan.
   To change the speed, edit `POLL_EVERY_MS` in `src/index.js`.
 - **The bot shows as offline in the member list.** That's normal: it only wakes up when needed.
@@ -168,14 +169,14 @@ See what the bot is doing: run `npm run logs` and try again. You can also check 
   (the *Use External Apps* permission). Adding the bot to the server (step 7.1) fixes it.
 - **`npm run setup -- <url>` says Discord couldn't verify the URL:** check the URL. Then run `npm run deploy`
   once more, because the deployed bot must have the app ID and public key from step 4.
-- **Auto mode doesn't reply:**
+- **Auto mode doesn't post links:**
   - Check `npm run logs` for a minute.
   - `Missing Access`: the bot can't see the channel.
   - `Missing Permissions`: the bot needs *Send Messages* and *Embed Links* in that channel.
   - `needs the DISCORD_BOT_TOKEN secret and PUBLIC_URL`: run `npx wrangler secret list`. It must show a secret
     named exactly `DISCORD_BOT_TOKEN`; if not, redo step 7.4. If `PUBLIC_URL` in `wrangler.jsonc` is empty,
     run step 6 again and then `npm run deploy`.
-  - The bot replies to nothing although it runs: turn on **Developer Portal → Bot → Message Content Intent**.
+  - The bot posts nothing although it runs: turn on **Developer Portal → Bot → Message Content Intent**.
     Setup tries to do this for you.
 - **`429` or `1015` errors in the logs:** Discord sometimes rate-limits Cloudflare's shared servers for a moment.
   Auto mode simply retries on the next run.

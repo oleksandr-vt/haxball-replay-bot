@@ -1,6 +1,6 @@
 import { WATCH_COMMAND } from './command.js';
 import { discordApi, isValidDiscordRequest, snowflakeTime } from './discord.js';
-import { findReplayFiles, haxballReplayerUrl, replayEmbeds, replayVersion } from './replays.js';
+import { findReplayFiles, haxballReplayerUrl, linkedReplayIds, replayEmbeds, replayVersion } from './replays.js';
 
 const KEEP_FILES_FOR_SECONDS = 365 * 24 * 60 * 60;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -141,23 +141,25 @@ async function autoReplyInChannel(env, channel, origin) {
   messages.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1)); // oldest first
   if (messages.length > 0) channel.newestId = messages.at(-1).id;
 
+  // Our own messages link to the files they answered, so those files are done.
   const isOurs = (message) => message.author.id === env.DISCORD_APP_ID;
-  for (const message of messages.filter(isOurs)) channel.answered.add(message.message_reference?.message_id);
+  for (const message of messages.filter(isOurs)) {
+    for (const id of linkedReplayIds(message)) channel.answered.add(id);
+  }
   const cutoff = Date.now() - AUTO_REPLY_WINDOW_MS;
 
   for (const message of messages) {
-    if (isOurs(message) || channel.answered.has(message.id) || snowflakeTime(message.id) < cutoff) continue;
-    const files = findReplayFiles(message);
+    if (isOurs(message) || snowflakeTime(message.id) < cutoff) continue;
+    const files = findReplayFiles(message).filter((file) => !channel.answered.has(file.id));
     if (files.length === 0) continue;
     const replays = await downloadReplays(files, origin, 10_000);
     if (replays.length === 0) continue;
     await saveReplays(replays, env); // the copies must exist before anyone can click the link
     await discordApi(env.DISCORD_BOT_TOKEN, 'POST', `/channels/${channel.id}/messages`, {
       embeds: replayEmbeds(replays),
-      message_reference: { message_id: message.id, fail_if_not_exists: false },
       allowed_mentions: { parse: [] },
     });
-    channel.answered.add(message.id);
+    for (const replay of replays) channel.answered.add(replay.id);
   }
 }
 

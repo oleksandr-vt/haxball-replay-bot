@@ -34,3 +34,8 @@ export function replayEmbeds(replays) {
     description: replays.length > 1 ? replay.filename : undefined,
   }));
 }
+
+// The IDs of the replay files a message from replayEmbeds links to (their links end in /r/<id>.hbr2).
+export function linkedReplayIds(message) {
+  return (message.embeds ?? []).flatMap((embed) => embed.url?.match(/\/r\/(\d+)\.hbr2/)?.[1] ?? []);
+}

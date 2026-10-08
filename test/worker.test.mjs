@@ -102,6 +102,12 @@ function snowflake(minutesAgo) {
   return String(BigInt(Date.now() - minutesAgo * 60_000 - 1420070400000) << 22n);
 }
 
+// A message the bot posted earlier, linking to the given replay file.
+function ourMessage(minutesAgo, fileId) {
+  const url = `https://www.haxball.com/replay?v=3#${ORIGIN}/r/${fileId}.hbr2`;
+  return { id: snowflake(minutesAgo), author: { id: APP_ID }, embeds: [{ title: LINK_TEXT, url }] };
+}
+
 // A cron run that was scheduled 54 s ago, so it has time for just one check before its minute is used up.
 const oneCheck = () => ({ scheduledTime: Date.now() - 54_000 });
 
@@ -192,13 +198,13 @@ test('returns 404 for files it does not have', async () => {
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
 });
 
-test('auto mode replies to each new replay file once, after saving it', async () => {
+test('auto mode posts a link for each new replay file once, after saving it', async () => {
   const env = makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: `${ORIGIN}/` });
   const fresh = { id: snowflake(1), author: { id: '42' }, attachments: [attachment('5000')] };
   const answered = { id: snowflake(3), author: { id: '42' }, attachments: [attachment('5001')] };
   const old = { id: snowflake(30), author: { id: '42' }, attachments: [attachment('5002')] };
   const chat = { id: snowflake(2), author: { id: '43' }, content: 'nice goal', attachments: [] };
-  const ourReply = { id: snowflake(2), author: { id: APP_ID }, message_reference: { message_id: answered.id } };
+  const ourReply = ourMessage(2, '5001');
   let savedBeforePosting = false;
   const calls = mockFetch({
     'cdn.discordapp.com': () => new Response(replayFile(3)),
@@ -213,7 +219,7 @@ test('auto mode replies to each new replay file once, after saving it', async ()
 
   const posts = calls.filter((call) => call.method === 'POST');
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.message_reference.message_id, fresh.id);
+  assert.equal(posts[0].body.message_reference, undefined); // a normal message, not a reply
   assert.deepEqual(posts[0].body.allowed_mentions, { parse: [] });
   assert.deepEqual(posts[0].body.embeds, [
     { title: LINK_TEXT, url: `https://www.haxball.com/replay?v=3#${ORIGIN}/r/5000.hbr2`, color: 0x00cbf4 },
@@ -224,7 +230,7 @@ test('auto mode replies to each new replay file once, after saving it', async ()
 test('auto mode keeps checking during its minute and only asks for newer messages', async () => {
   const env = makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN });
   const answered = { id: snowflake(3), author: { id: '42' }, attachments: [attachment('5010')] };
-  const ourReply = { id: snowflake(2), author: { id: APP_ID }, message_reference: { message_id: answered.id } };
+  const ourReply = ourMessage(2, '5010');
   const posted = { id: snowflake(0), author: { id: '42' }, attachments: [attachment('5011')] };
   const calls = mockFetch({
     'cdn.discordapp.com': () => new Response(replayFile(3)),
@@ -242,7 +248,7 @@ test('auto mode keeps checking during its minute and only asks for newer message
   assert.match(gets[1].url, new RegExp(`after=${ourReply.id}`));
   const posts = calls.filter((call) => call.method === 'POST');
   assert.equal(posts.length, 1);
-  assert.equal(posts[0].body.message_reference.message_id, posted.id);
+  assert.match(posts[0].body.embeds[0].url, /\/r\/5011\.hbr2$/);
 });
 
 test('auto mode skips files that are not replays', async () => {
