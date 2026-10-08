@@ -1,36 +1,18 @@
-// Finding HaxBall replays in Discord messages and building the buttons that open them.
+// Finding HaxBall replay files in Discord messages and building the reply that opens them.
 
-const ANALYZER = 'https://haxball-replay-analyzer.github.io/';
-
-// Current HaxBall replays are format version 3. Files tell us their version themselves (see replayVersion).
-const THEHAX_REPLAY_VERSION = 3;
-
-const THEHAX_LINK = /replay\.thehax\.pl\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+// Same look as the UHL league bot's replay links.
+const WATCH_LINK_TEXT = 'Пряме посилання для перегляду повтору';
+const EMBED_COLOR = 0x00cbf4;
 
 // haxball.com loads the replayer for the given format version and downloads the file after the "#".
-// The file's server has to allow that with CORS: thehax does, and so does our /r/ route.
+// The file's server has to allow that with CORS, which our /r/ route does.
 export function haxballReplayerUrl(fileUrl, version) {
   return `https://www.haxball.com/replay?v=${version}#${fileUrl}`;
 }
 
-// The message itself plus any messages forwarded inside it.
-function messageParts(message) {
-  return [message, ...(message.message_snapshots ?? []).map((snapshot) => snapshot.message)];
-}
-
-// thehax links anywhere in the message: text, embeds or buttons (the thehax bot may use any of them).
-export function findThehaxReplays(message) {
-  const text = JSON.stringify(messageParts(message).map((part) => [part.content, part.embeds, part.components]));
-  const ids = new Set(Array.from(text.matchAll(THEHAX_LINK), (match) => match[1].toLowerCase()));
-  return [...ids].map((id) => ({
-    watchUrl: haxballReplayerUrl(`https://replay.thehax.pl/${id}/download`, THEHAX_REPLAY_VERSION),
-    // The Analyzer can only open replays hosted on thehax, which it downloads by ID.
-    analyzeUrl: `${ANALYZER}?thehax=${id}`,
-  }));
-}
-
+// .hbr2 files in the message itself and in any messages forwarded inside it.
 export function findReplayFiles(message) {
-  return messageParts(message)
+  return [message, ...(message.message_snapshots ?? []).map((snapshot) => snapshot.message)]
     .flatMap((part) => part.attachments ?? [])
     .filter((attachment) => /\.hbr2$/i.test(attachment.filename));
 }
@@ -43,17 +25,12 @@ export function replayVersion(bytes) {
   return magic === 'HBR2' ? view.getUint32(4) : null;
 }
 
-// One row of link buttons per replay. Discord allows at most 5 rows per message.
-export function replayButtons(replays) {
-  const numbered = replays.length > 1;
-  return replays.slice(0, 5).map((replay, i) => {
-    const suffix = numbered ? ` #${i + 1}` : '';
-    const buttons = [linkButton(`Watch in HaxBall${suffix}`, '▶️', replay.watchUrl)];
-    if (replay.analyzeUrl) buttons.push(linkButton(`Open in Analyzer${suffix}`, '📊', replay.analyzeUrl));
-    return { type: 1, components: buttons };
-  });
-}
-
-function linkButton(label, emoji, url) {
-  return { type: 2, style: 5, label, emoji: { name: emoji }, url };
+// One link per replay. When a message has several, each link also shows its file name.
+export function replayEmbeds(replays) {
+  return replays.map((replay) => ({
+    title: WATCH_LINK_TEXT,
+    url: replay.watchUrl,
+    color: EMBED_COLOR,
+    description: replays.length > 1 ? replay.filename : undefined,
+  }));
 }

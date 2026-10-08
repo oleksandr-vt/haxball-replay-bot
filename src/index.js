@@ -1,9 +1,10 @@
 import { WATCH_COMMAND } from './command.js';
 import { discordApi, isValidDiscordRequest, snowflakeTime } from './discord.js';
-import { findReplayFiles, findThehaxReplays, haxballReplayerUrl, replayButtons, replayVersion } from './replays.js';
+import { findReplayFiles, haxballReplayerUrl, replayEmbeds, replayVersion } from './replays.js';
 
 const KEEP_FILES_FOR_SECONDS = 365 * 24 * 60 * 60;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_REPLAYS_PER_MESSAGE = 10; // a Discord message can have at most 10 embeds
 const AUTO_REPLY_WINDOW_MS = 10 * 60 * 1000; // auto mode only answers messages from the last 10 minutes
 
 const EPHEMERAL = 64; // message flag: only the person who used the command sees it
@@ -35,55 +36,54 @@ async function handleInteraction(request, env, ctx, origin) {
   if (interaction.type === 2 && interaction.data.name === WATCH_COMMAND.name) {
     return Response.json(await watchReplay(interaction, env, ctx, origin));
   }
-  return Response.json(textReply('Unknown command.', EPHEMERAL));
+  return Response.json(textReply('Невідома команда.', EPHEMERAL));
 }
 
-// "Watch replay" was used on a message: reply with buttons for every replay in it.
+// "Watch replay" was used on a message: reply with a link for every replay file in it.
 async function watchReplay(interaction, env, ctx, origin) {
   const message = interaction.data.resolved?.messages?.[interaction.data.target_id];
-  if (!message) return textReply("I couldn't read that message.", EPHEMERAL);
+  if (!message) return textReply('Не вдалося прочитати це повідомлення.', EPHEMERAL);
+  const files = findReplayFiles(message);
+  if (files.length === 0) return textReply('У цьому повідомленні немає повтору HaxBall (файлу .hbr2).', EPHEMERAL);
 
-  const files = findReplayFiles(message).slice(0, 5);
-  const fileReplays = await Promise.all(
-    files.map((file) =>
-      storeReplayFile(file, env, ctx, origin).catch((err) => {
-        console.error(`Could not store ${file.filename}:`, err);
-        return null;
+  // Discord gives up on us after 3 seconds, so don't wait long for the downloads,
+  // and finish saving the copies after we've answered.
+  const replays = await downloadReplays(files, origin, 2000);
+  ctx.waitUntil(saveReplays(replays, env));
+  if (replays.length === 0) return textReply('Не вдалося прочитати файл. Це точно повтор HaxBall (.hbr2)?', EPHEMERAL);
+  return { type: 4, data: { embeds: replayEmbeds(replays), allowed_mentions: { parse: [] } } };
+}
+
+// Discord's links to attached files expire after about a day, so we download each replay,
+// keep a copy (see saveReplays) and link to that copy at <origin>/r/<attachment id>.hbr2.
+async function downloadReplays(files, origin, timeoutMs) {
+  const downloads = files.slice(0, MAX_REPLAYS_PER_MESSAGE).map(async (file) => {
+    try {
+      if (file.size > MAX_FILE_BYTES) throw new Error(`file is too big (${file.size} bytes)`);
+      const response = await fetch(file.url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) throw new Error(`download failed with ${response.status}`);
+      const bytes = await response.arrayBuffer();
+      const version = replayVersion(bytes);
+      if (!version) throw new Error('not an HBR2 replay');
+      const watchUrl = haxballReplayerUrl(`${origin}/r/${file.id}.hbr2`, version);
+      return { id: file.id, filename: file.filename, bytes, watchUrl };
+    } catch (err) {
+      console.error(`Could not download ${file.filename}:`, err);
+      return null;
+    }
+  });
+  return (await Promise.all(downloads)).filter(Boolean);
+}
+
+function saveReplays(replays, env) {
+  return Promise.all(
+    replays.map((replay) =>
+      env.REPLAYS.put(replay.id, replay.bytes, {
+        expirationTtl: KEEP_FILES_FOR_SECONDS,
+        metadata: { filename: replay.filename },
       }),
     ),
   );
-  const replays = [...findThehaxReplays(message), ...fileReplays.filter(Boolean)];
-
-  if (replays.length === 0) {
-    return textReply(
-      files.length > 0
-        ? "I couldn't read that replay file. Is it a valid .hbr2 replay?"
-        : 'No HaxBall replay in that message. I look for .hbr2 files and replay.thehax.pl links.',
-      EPHEMERAL,
-    );
-  }
-  return { type: 4, data: { components: replayButtons(replays), allowed_mentions: { parse: [] } } };
-}
-
-// Discord's links to attached files expire after about a day, so we keep our own copy
-// and serve it from /r/<attachment id>.hbr2.
-async function storeReplayFile(attachment, env, ctx, origin) {
-  if (attachment.size > MAX_FILE_BYTES) throw new Error(`file is too big (${attachment.size} bytes)`);
-  // Discord gives up on us after 3 seconds, so don't wait long for the download.
-  const response = await fetch(attachment.url, { signal: AbortSignal.timeout(2000) });
-  if (!response.ok) throw new Error(`download failed with ${response.status}`);
-  const bytes = await response.arrayBuffer();
-  const version = replayVersion(bytes);
-  if (!version) throw new Error('not an HBR2 replay');
-
-  // Saving finishes in the background, after we've answered Discord.
-  ctx.waitUntil(
-    env.REPLAYS.put(attachment.id, bytes, {
-      expirationTtl: KEEP_FILES_FOR_SECONDS,
-      metadata: { filename: attachment.filename },
-    }),
-  );
-  return { watchUrl: haxballReplayerUrl(`${origin}/r/${attachment.id}.hbr2`, version) };
 }
 
 async function serveReplayFile(id, env) {
@@ -103,26 +103,28 @@ async function serveReplayFile(id, env) {
   });
 }
 
-// Auto mode, run once a minute by the cron trigger in wrangler.jsonc: answer new thehax links
+// Auto mode, run once a minute by the cron trigger in wrangler.jsonc: reply to new .hbr2 files
 // in the configured channels. Already-answered messages are skipped, so if a run fails,
 // the next one simply picks up what it missed.
 async function autoReply(env) {
   const channelIds = (env.AUTO_CHANNEL_IDS ?? '').split(/[\s,]+/).filter(Boolean);
   if (channelIds.length === 0) return;
-  if (!env.DISCORD_BOT_TOKEN) {
-    console.error('AUTO_CHANNEL_IDS is set, but the DISCORD_BOT_TOKEN secret is missing (see README, step 7).');
+  // There's no incoming request to learn our own address from, so auto mode needs PUBLIC_URL.
+  const origin = env.PUBLIC_URL?.replace(/\/+$/, '');
+  if (!env.DISCORD_BOT_TOKEN || !origin) {
+    console.error('Auto mode needs the DISCORD_BOT_TOKEN secret and PUBLIC_URL in wrangler.jsonc (see README, step 7).');
     return;
   }
   for (const channelId of channelIds) {
     try {
-      await autoReplyInChannel(env, channelId);
+      await autoReplyInChannel(env, channelId, origin);
     } catch (err) {
       console.error(`Auto mode failed in channel ${channelId}:`, err);
     }
   }
 }
 
-async function autoReplyInChannel(env, channelId) {
+async function autoReplyInChannel(env, channelId, origin) {
   const messages = await discordApi(env.DISCORD_BOT_TOKEN, 'GET', `/channels/${channelId}/messages?limit=50`);
   const isOurs = (message) => message.author.id === env.DISCORD_APP_ID;
   const answered = new Set(messages.filter(isOurs).map((message) => message.message_reference?.message_id));
@@ -130,10 +132,13 @@ async function autoReplyInChannel(env, channelId) {
 
   for (const message of messages.toReversed()) { // oldest first
     if (isOurs(message) || answered.has(message.id) || snowflakeTime(message.id) < cutoff) continue;
-    const replays = findThehaxReplays(message);
+    const files = findReplayFiles(message);
+    if (files.length === 0) continue;
+    const replays = await downloadReplays(files, origin, 10_000);
     if (replays.length === 0) continue;
+    await saveReplays(replays, env); // the copies must exist before anyone can click the link
     await discordApi(env.DISCORD_BOT_TOKEN, 'POST', `/channels/${channelId}/messages`, {
-      components: replayButtons(replays),
+      embeds: replayEmbeds(replays),
       message_reference: { message_id: message.id, fail_if_not_exists: false },
       allowed_mentions: { parse: [] },
     });

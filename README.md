@@ -1,12 +1,12 @@
 # HaxBall Replay Bot
 
-A Discord bot that opens HaxBall replays in the official **haxball.com replayer** and the
-**[Haxball Replay Analyzer](https://haxball-replay-analyzer.github.io/)** instead of the replay.thehax.pl page.
+A Discord bot that answers HaxBall replays (`.hbr2` files) posted in Discord with a direct link to the
+official **haxball.com replayer**. The reply is an embed whose title is the link:
 
-- **Right-click any message → Apps → Watch replay.** Works on thehax links (from the thehax bot)
-  and on `.hbr2` files posted straight to Discord. The bot answers with buttons:
-  **▶️ Watch in HaxBall** and **📊 Open in Analyzer**.
-- **Auto mode (optional):** the bot answers every new thehax link in your replay channel by itself,
+> **Пряме посилання для перегляду повтору**
+
+- **Right-click a message with an `.hbr2` file → Apps → Watch replay.** Works in any server or DM.
+- **Auto mode (optional):** the bot replies to every new `.hbr2` file in your replay channels by itself,
   within about a minute.
 
 **No server needed.** The bot runs on Cloudflare Workers' free plan. Nothing has to stay on, your PC included.
@@ -70,8 +70,8 @@ npm run deploy
 ```
 
 - The first time, wrangler may ask you to pick a **workers.dev subdomain**. Any free name works.
-- If it asks about the `REPLAYS` KV namespace, let it **create a new one**. That's where copies of
-  `.hbr2` files are stored. Wrangler adds its ID to `wrangler.jsonc`, which is expected.
+- If it asks about the `REPLAYS` KV namespace, let it **create a new one**. That's where the copies of
+  replay files are stored. Wrangler adds its ID to `wrangler.jsonc`, which is expected.
 
 At the end it prints your bot's address. Copy it:
 
@@ -85,19 +85,19 @@ https://haxball-replay-bot.<your-subdomain>.workers.dev
 npm run setup -- https://haxball-replay-bot.<your-subdomain>.workers.dev
 ```
 
-This registers the **Watch replay** command, points Discord at your bot, and prints two install links.
+This registers the **Watch replay** command, points Discord at your bot, saves the bot's address into
+`wrangler.jsonc` (auto mode needs it), and prints two install links.
 
 Open the first link, **Add to your account**, and click **Authorize**. Done!
 
-**Try it:** in any server or DM, right-click a message that has a thehax link or an `.hbr2` file
-(long-press on the phone) → **Apps** → **Watch replay**.
+**Try it:** in any server or DM, right-click a message that has an `.hbr2` file (long-press on the phone)
+→ **Apps** → **Watch replay**.
 
 Adding the bot to your account means you can use it everywhere, even in servers where you're not an admin.
 
 ### 7. (Optional) Auto mode
 
-The bot answers new thehax links in chosen channels without anyone clicking anything.
-It needs the thehax bot to be in that server, because it reacts to thehax's links.
+The bot replies to every new `.hbr2` file in chosen channels without anyone clicking anything.
 
 1. Open the second link printed in step 6, **Add to a server**, and pick your server.
    You need the *Manage Server* permission there. If the replay channel is private,
@@ -117,35 +117,39 @@ It needs the thehax bot to be in that server, because it reacts to thehax's link
    npm run deploy
    ```
 
-Now upload a replay. Within a minute of the thehax bot posting its link, your bot replies to it with the buttons.
+Now post a replay in that channel. Within a minute the bot replies to it with the link.
 
 ---
 
 ## How it works
 
-| Replay | ▶️ Watch in HaxBall | 📊 Open in Analyzer |
-|---|---|---|
-| thehax link `replay.thehax.pl/<id>` | `https://www.haxball.com/replay?v=3#https://replay.thehax.pl/<id>/download` | `https://haxball-replay-analyzer.github.io/?thehax=<id>` |
-| `.hbr2` file posted to Discord | `https://www.haxball.com/replay?v=<version>#https://<your-bot>/r/<file-id>.hbr2` | not possible, see below |
+The bot replies with a link like this:
 
-- **thehax links:** thehax lets other sites download its replay files, so the HaxBall replayer and the
-  Analyzer both load the replay straight from thehax. The bot stores nothing for these.
-- **`.hbr2` files:** Discord's links to files expire after about a day. So the bot keeps a copy for a year
-  (Cloudflare KV storage) and serves it to the HaxBall replayer from `/r/<file-id>.hbr2`.
-- **Analyzer button only for thehax replays:** the Analyzer can only open replays hosted on thehax.
-  That's one good reason to keep the thehax bot around.
+```
+https://www.haxball.com/replay?v=3#https://haxball-replay-bot.<your-subdomain>.workers.dev/r/<file-id>.hbr2
+```
+
+haxball.com opens its replayer and downloads the replay from the address after the `#`.
+
+- **Why the bot keeps a copy of each replay:** Discord's links to files expire after about a day,
+  and haxball.com may only download files from servers that allow it. So the bot downloads the replay,
+  keeps a copy for a year (Cloudflare KV storage), and serves it from `/r/<file-id>.hbr2`.
+- **`v=3`** is the replay format version. The bot reads it from the file, so old replays open in the right replayer.
+- **Several replays in one message:** the bot sends one link per replay, each labeled with its file name.
 - **Auto mode:** Cloudflare runs the bot once a minute. It reads the last 50 messages of each auto-mode
-  channel and replies to thehax links from the last 10 minutes that it hasn't answered yet.
+  channel and replies to `.hbr2` files from the last 10 minutes that it hasn't answered yet.
   If one run fails, the next one catches up.
 - **The bot shows as offline in the member list.** That's normal: it only wakes up when needed.
 
-**Tip, no bot needed:** you can turn any thehax link into these links by hand using the patterns in the table.
+**Changing the texts:** the link text and color are at the top of `src/replays.js`.
+The messages that only the person using the command sees are in `src/index.js`.
+After changing them, run `npm run deploy`.
 
 ## Costs and limits
 
 Everything fits in Cloudflare's free plan: 100,000 requests per day, plus 1 GB of KV storage with
-1,000 writes and 100,000 reads per day. A replay file is about 100 KB. Auto mode uses 1,440 runs a day,
-one per minute.
+1,000 writes and 100,000 reads per day. A replay file is about 100 KB, so 1 GB holds about 10,000 replays,
+and each copy is deleted after a year. Auto mode uses 1,440 runs a day, one per minute.
 
 ## Troubleshooting
 
@@ -162,7 +166,8 @@ See what the bot is doing: run `npm run logs` and try again. You can also check 
 - **Auto mode doesn't reply:**
   - Check `npm run logs` for a minute.
   - `Missing Access`: the bot can't see the channel.
-  - `DISCORD_BOT_TOKEN secret is missing`: redo step 7.4.
+  - `Missing Permissions`: the bot needs *Send Messages* and *Embed Links* in that channel.
+  - `needs the DISCORD_BOT_TOKEN secret and PUBLIC_URL`: redo step 7.4, or run step 6 again and then `npm run deploy`.
   - The bot replies to nothing although it runs: turn on **Developer Portal → Bot → Message Content Intent**.
     Setup tries to do this for you.
 - **`429` or `1015` errors in the logs:** Discord sometimes rate-limits Cloudflare's shared servers for a moment.
@@ -176,9 +181,9 @@ Edit the code in `src/`, run `npm test`, then `npm run deploy`.
 
 | File | What's in it |
 |---|---|
-| `src/index.js` | Handles Discord requests, serves stored files, runs auto mode |
-| `src/replays.js` | Finds replays in messages and builds the links and buttons |
+| `src/index.js` | Handles Discord requests, keeps and serves replay copies, runs auto mode |
+| `src/replays.js` | Finds replay files in messages and builds the link |
 | `src/discord.js` | Checks Discord's signatures and calls Discord's API |
 | `src/command.js` | The "Watch replay" command definition |
 | `scripts/setup.mjs` | One-time Discord setup (`npm run setup`) |
-| `wrangler.jsonc` | Cloudflare settings: app details, auto-mode channels, storage, schedule |
+| `wrangler.jsonc` | Cloudflare settings: app details, bot address, auto-mode channels, storage, schedule |

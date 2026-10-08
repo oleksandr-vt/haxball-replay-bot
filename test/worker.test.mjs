@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import worker from '../src/index.js';
 
-const THEHAX_ID = '5b5b0fda-2560-4bce-8da9-5998afadd74a';
 const ORIGIN = 'https://bot.example.workers.dev';
 const APP_ID = '1000';
+const LINK_TEXT = 'Пряме посилання для перегляду повтору';
 
 const keys = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
 const publicKeyHex = Buffer.from(await crypto.subtle.exportKey('raw', keys.publicKey)).toString('hex');
@@ -56,6 +56,10 @@ function replayFile(version = 3) {
   return bytes;
 }
 
+function attachment(id, filename = 'HBReplay.hbr2') {
+  return { id, filename, size: 64, url: `https://cdn.discordapp.com/attachments/3000/${id}/${filename}?ex=1&is=2&hm=3` };
+}
+
 async function signedRequest(payload, { tamper = false } = {}) {
   const body = JSON.stringify(payload);
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -68,7 +72,7 @@ async function signedRequest(payload, { tamper = false } = {}) {
 }
 
 function watchReplayInteraction(message) {
-  const target = { id: '2000', channel_id: '3000', content: '', embeds: [], attachments: [], components: [], ...message };
+  const target = { id: '2000', channel_id: '3000', content: '', embeds: [], attachments: [], ...message };
   return {
     type: 2,
     data: { type: 3, name: 'Watch replay', target_id: target.id, resolved: { messages: { [target.id]: target } } },
@@ -81,8 +85,6 @@ async function runInteraction(payload, env = makeEnv()) {
   await ctx.settled();
   return { response, json: await response.json(), env };
 }
-
-const buttonUrls = (json) => json.data.components.map((row) => row.components.map((button) => button.url));
 
 // For tests where the worker is expected to log an error.
 async function withoutErrorLogs(fn) {
@@ -117,44 +119,14 @@ test('rejects requests without a signature', async () => {
   assert.equal(response.status, 401);
 });
 
-test('turns a thehax link into HaxBall and Analyzer buttons', async () => {
-  const { json } = await runInteraction(watchReplayInteraction({ content: `https://replay.thehax.pl/${THEHAX_ID}` }));
-  assert.equal(json.type, 4);
-  assert.deepEqual(buttonUrls(json), [
-    [
-      `https://www.haxball.com/replay?v=3#https://replay.thehax.pl/${THEHAX_ID}/download`,
-      `https://haxball-replay-analyzer.github.io/?thehax=${THEHAX_ID}`,
-    ],
-  ]);
-  assert.equal(json.data.components[0].components[0].label, 'Watch in HaxBall');
-});
-
-test('finds thehax links in embeds and buttons, once per replay', async () => {
-  const link = `https://replay.thehax.pl/${THEHAX_ID.toUpperCase()}`;
-  const { json } = await runInteraction(
-    watchReplayInteraction({
-      embeds: [{ title: 'Replay', url: link }],
-      components: [{ type: 1, components: [{ type: 2, style: 5, label: 'Open', url: link }] }],
-    }),
-  );
-  assert.equal(json.data.components.length, 1);
-  assert.match(json.data.components[0].components[0].url, new RegExp(THEHAX_ID));
-});
-
-test('finds replays in forwarded messages', async () => {
-  const { json } = await runInteraction(
-    watchReplayInteraction({ message_snapshots: [{ message: { content: `replay.thehax.pl/${THEHAX_ID}` } }] }),
-  );
-  assert.equal(json.data.components.length, 1);
-});
-
-test('keeps a copy of an attached .hbr2 file and links to it', async () => {
-  const fileUrl = 'https://cdn.discordapp.com/attachments/3000/4000/HBReplay.hbr2?ex=1&is=2&hm=3';
+test('replies with a haxball.com link for an attached .hbr2 file and keeps a copy', async () => {
   mockFetch({ 'cdn.discordapp.com': () => new Response(replayFile(3)) });
-  const attachment = { id: '4000', filename: 'HBReplay.hbr2', size: 64, url: fileUrl };
-  const { json, env } = await runInteraction(watchReplayInteraction({ attachments: [attachment] }));
+  const { json, env } = await runInteraction(watchReplayInteraction({ attachments: [attachment('4000')] }));
 
-  assert.deepEqual(buttonUrls(json), [[`https://www.haxball.com/replay?v=3#${ORIGIN}/r/4000.hbr2`]]);
+  assert.equal(json.type, 4);
+  assert.deepEqual(json.data.embeds, [
+    { title: LINK_TEXT, url: `https://www.haxball.com/replay?v=3#${ORIGIN}/r/4000.hbr2`, color: 0x00cbf4 },
+  ]);
   const stored = env.REPLAYS.entries.get('4000');
   assert.deepEqual(stored.bytes, replayFile(3));
   assert.equal(stored.options.metadata.filename, 'HBReplay.hbr2');
@@ -168,33 +140,46 @@ test('keeps a copy of an attached .hbr2 file and links to it', async () => {
 
 test('uses the format version written in the file', async () => {
   mockFetch({ 'cdn.discordapp.com': () => new Response(replayFile(2)) });
-  const attachment = { id: '4001', filename: 'old.HBR2', size: 64, url: 'https://cdn.discordapp.com/x/old.HBR2' };
-  const { json } = await runInteraction(watchReplayInteraction({ attachments: [attachment] }));
-  assert.match(buttonUrls(json)[0][0], /^https:\/\/www\.haxball\.com\/replay\?v=2#/);
+  const { json } = await runInteraction(watchReplayInteraction({ attachments: [attachment('4001', 'old.HBR2')] }));
+  assert.match(json.data.embeds[0].url, /^https:\/\/www\.haxball\.com\/replay\?v=2#/);
 });
 
-test('numbers the buttons when a message has several replays', async () => {
+test('shows file names when a message has several replays', async () => {
   mockFetch({ 'cdn.discordapp.com': () => new Response(replayFile(3)) });
-  const attachment = { id: '4002', filename: 'a.hbr2', size: 64, url: 'https://cdn.discordapp.com/x/a.hbr2' };
   const { json } = await runInteraction(
-    watchReplayInteraction({ content: `replay.thehax.pl/${THEHAX_ID}`, attachments: [attachment] }),
+    watchReplayInteraction({ attachments: [attachment('4002', 'first.hbr2'), attachment('4003', 'second.hbr2')] }),
   );
-  const labels = json.data.components.map((row) => row.components.map((button) => button.label));
-  assert.deepEqual(labels, [['Watch in HaxBall #1', 'Open in Analyzer #1'], ['Watch in HaxBall #2']]);
+  assert.deepEqual(
+    json.data.embeds.map((embed) => [embed.title, embed.description]),
+    [
+      [LINK_TEXT, 'first.hbr2'],
+      [LINK_TEXT, 'second.hbr2'],
+    ],
+  );
+});
+
+test('finds replays in forwarded messages', async () => {
+  mockFetch({ 'cdn.discordapp.com': () => new Response(replayFile(3)) });
+  const { json } = await runInteraction(
+    watchReplayInteraction({ message_snapshots: [{ message: { attachments: [attachment('4004')] } }] }),
+  );
+  assert.equal(json.data.embeds.length, 1);
 });
 
 test('tells only the user when the message has no replay', async () => {
-  const { json } = await runInteraction(watchReplayInteraction({ content: 'gg' }));
+  const { json } = await runInteraction(
+    watchReplayInteraction({ content: 'gg', attachments: [{ id: '1', filename: 'goal.png', url: 'https://cdn.discordapp.com/x' }] }),
+  );
   assert.equal(json.data.flags, 64);
-  assert.match(json.data.content, /No HaxBall replay/);
+  assert.match(json.data.content, /\.hbr2/);
 });
 
 test('tells only the user when the file is not a replay', async () => {
   mockFetch({ 'cdn.discordapp.com': () => new Response('not a replay') });
-  const attachment = { id: '4003', filename: 'fake.hbr2', size: 12, url: 'https://cdn.discordapp.com/x/fake.hbr2' };
-  const { json, env } = await withoutErrorLogs(() => runInteraction(watchReplayInteraction({ attachments: [attachment] })));
+  const { json, env } = await withoutErrorLogs(() =>
+    runInteraction(watchReplayInteraction({ attachments: [attachment('4005', 'fake.hbr2')] })),
+  );
   assert.equal(json.data.flags, 64);
-  assert.match(json.data.content, /couldn't read that replay file/);
   assert.equal(env.REPLAYS.entries.size, 0);
 });
 
@@ -204,37 +189,61 @@ test('returns 404 for files it does not have', async () => {
   assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
 });
 
-test('auto mode answers each new thehax link once', async () => {
-  const fresh = { id: snowflake(1), author: { id: '42' }, content: `https://replay.thehax.pl/${THEHAX_ID}` };
-  const answered = { id: snowflake(3), author: { id: '42' }, content: `https://replay.thehax.pl/${THEHAX_ID}` };
-  const old = { id: snowflake(30), author: { id: '42' }, content: `https://replay.thehax.pl/${THEHAX_ID}` };
-  const chat = { id: snowflake(2), author: { id: '43' }, content: 'nice goal' };
+test('auto mode replies to each new replay file once, after saving it', async () => {
+  const env = makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: `${ORIGIN}/` });
+  const fresh = { id: snowflake(1), author: { id: '42' }, attachments: [attachment('5000')] };
+  const answered = { id: snowflake(3), author: { id: '42' }, attachments: [attachment('5001')] };
+  const old = { id: snowflake(30), author: { id: '42' }, attachments: [attachment('5002')] };
+  const chat = { id: snowflake(2), author: { id: '43' }, content: 'nice goal', attachments: [] };
   const ourReply = { id: snowflake(2), author: { id: APP_ID }, message_reference: { message_id: answered.id } };
+  let savedBeforePosting = false;
   const calls = mockFetch({
-    '/channels/555/messages': (method) =>
-      method === 'GET' ? Response.json([fresh, ourReply, chat, answered, old]) : Response.json({ id: '1' }),
+    'cdn.discordapp.com': () => new Response(replayFile(3)),
+    '/channels/555/messages': (method) => {
+      if (method === 'GET') return Response.json([fresh, ourReply, chat, answered, old]);
+      savedBeforePosting = env.REPLAYS.entries.has('5000');
+      return Response.json({ id: '1' });
+    },
   });
 
   const ctx = makeCtx();
-  await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token' }), ctx);
+  await worker.scheduled({}, env, ctx);
   await ctx.settled();
 
   const posts = calls.filter((call) => call.method === 'POST');
   assert.equal(posts.length, 1);
   assert.equal(posts[0].body.message_reference.message_id, fresh.id);
   assert.deepEqual(posts[0].body.allowed_mentions, { parse: [] });
-  assert.equal(posts[0].body.components[0].components[1].url, `https://haxball-replay-analyzer.github.io/?thehax=${THEHAX_ID}`);
+  assert.deepEqual(posts[0].body.embeds, [
+    { title: LINK_TEXT, url: `https://www.haxball.com/replay?v=3#${ORIGIN}/r/5000.hbr2`, color: 0x00cbf4 },
+  ]);
+  assert.ok(savedBeforePosting);
+});
+
+test('auto mode skips files that are not replays', async () => {
+  const fake = { id: snowflake(1), author: { id: '42' }, attachments: [attachment('5003', 'fake.hbr2')] };
+  const calls = mockFetch({
+    'cdn.discordapp.com': () => new Response('not a replay'),
+    '/channels/555/messages': () => Response.json([fake]),
+  });
+  const ctx = makeCtx();
+  await withoutErrorLogs(async () => {
+    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }), ctx);
+    await ctx.settled();
+  });
+  assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
 });
 
 test('auto mode keeps going when one channel fails', async () => {
-  const fresh = { id: snowflake(1), author: { id: '42' }, content: `replay.thehax.pl/${THEHAX_ID}` };
+  const fresh = { id: snowflake(1), author: { id: '42' }, attachments: [attachment('5004')] };
   const calls = mockFetch({
+    'cdn.discordapp.com': () => new Response(replayFile(3)),
     '/channels/111/messages': () => new Response('Missing Access', { status: 403 }),
     '/channels/222/messages': (method) => (method === 'GET' ? Response.json([fresh]) : Response.json({ id: '1' })),
   });
   const ctx = makeCtx();
   await withoutErrorLogs(async () => {
-    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '111, 222', DISCORD_BOT_TOKEN: 'token' }), ctx);
+    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '111, 222', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }), ctx);
     await ctx.settled();
   });
   assert.equal(calls.filter((call) => call.method === 'POST' && call.url.includes('/channels/222/')).length, 1);
@@ -243,7 +252,17 @@ test('auto mode keeps going when one channel fails', async () => {
 test('auto mode does nothing when no channels are set', async () => {
   const calls = mockFetch({});
   const ctx = makeCtx();
-  await worker.scheduled({}, makeEnv({ DISCORD_BOT_TOKEN: 'token' }), ctx);
+  await worker.scheduled({}, makeEnv({ DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }), ctx);
   await ctx.settled();
+  assert.equal(calls.length, 0);
+});
+
+test('auto mode does nothing without PUBLIC_URL', async () => {
+  const calls = mockFetch({});
+  const ctx = makeCtx();
+  await withoutErrorLogs(async () => {
+    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token' }), ctx);
+    await ctx.settled();
+  });
   assert.equal(calls.length, 0);
 });

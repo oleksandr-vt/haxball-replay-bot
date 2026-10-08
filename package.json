@@ -2,7 +2,7 @@
   "name": "haxball-replay-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Discord bot that turns HaxBall replays into links to the haxball.com replayer and the Haxball Replay Analyzer. Runs free on Cloudflare Workers.",
+  "description": "Discord bot that replies to HaxBall replay files with a direct link to the haxball.com replayer. Runs free on Cloudflare Workers.",
   "type": "module",
   "engines": {
     "node": ">=22"

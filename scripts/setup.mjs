@@ -9,8 +9,9 @@ import { createInterface } from 'node:readline/promises';
 import { WATCH_COMMAND } from '../src/command.js';
 import { discordApi } from '../src/discord.js';
 
-// What the bot may do in a server (only auto mode needs it): View Channels, Send Messages, Read Message History.
-const BOT_PERMISSIONS = String((1 << 10) | (1 << 11) | (1 << 16));
+// What the bot may do in a server (only auto mode needs it):
+// View Channels, Send Messages, Embed Links, Read Message History.
+const BOT_PERMISSIONS = String((1 << 10) | (1 << 11) | (1 << 14) | (1 << 16));
 const MESSAGE_CONTENT_INTENT = 1 << 19; // the "Message Content Intent" switch in the Developer Portal
 const CONFIG_FILE = new URL('../wrangler.jsonc', import.meta.url);
 
@@ -30,12 +31,8 @@ console.log(`Discord app: ${app.name} (${app.id})`);
 
 // The worker needs this app's ID and public key to check that requests really come from Discord.
 let config = readFileSync(CONFIG_FILE, 'utf8');
-const setting = (name) => config.match(new RegExp(`"${name}"\\s*:\\s*"([^"]*)"`))?.[1];
 if (setting('DISCORD_APP_ID') !== app.id || setting('DISCORD_PUBLIC_KEY') !== app.verify_key) {
-  config = config
-    .replace(/("DISCORD_APP_ID"\s*:\s*)"[^"]*"/, `$1"${app.id}"`)
-    .replace(/("DISCORD_PUBLIC_KEY"\s*:\s*)"[^"]*"/, `$1"${app.verify_key}"`);
-  writeFileSync(CONFIG_FILE, config);
+  saveSettings({ DISCORD_APP_ID: app.id, DISCORD_PUBLIC_KEY: app.verify_key });
   console.log('\n✔ Wrote your app ID and public key into wrangler.jsonc.');
   console.log('  Now run "npm run deploy", then run "npm run setup" again.\n');
   process.exit(0);
@@ -67,7 +64,13 @@ await discord('PATCH', '/applications/@me', {
 );
 console.log(`✔ Interactions Endpoint URL set to ${workerUrl}/interactions`);
 
-// Auto mode reads the thehax bot's messages, which Discord only allows with the Message Content intent.
+// Auto mode puts this address into the links it posts (PUBLIC_URL in wrangler.jsonc).
+if (setting('PUBLIC_URL') !== workerUrl) {
+  saveSettings({ PUBLIC_URL: workerUrl });
+  console.log('✔ Saved the bot address into wrangler.jsonc (auto mode uses it after your next "npm run deploy")');
+}
+
+// Auto mode reads the files people post, which Discord only allows with the Message Content intent.
 if (!(app.flags & MESSAGE_CONTENT_INTENT)) {
   try {
     await discord('PATCH', '/applications/@me', { flags: app.flags | MESSAGE_CONTENT_INTENT });
@@ -121,6 +124,19 @@ function logInToGatewayOnce(botToken) {
       reject(new Error(`connection closed (${event.code})`)); // no effect if READY already resolved it
     });
   });
+}
+
+function setting(name) {
+  return config.match(new RegExp(`"${name}"\\s*:\\s*"([^"]*)"`))?.[1];
+}
+
+function saveSettings(values) {
+  for (const [name, value] of Object.entries(values)) {
+    const pattern = new RegExp(`("${name}"\\s*:\\s*)"[^"]*"`);
+    if (!pattern.test(config)) fail(`wrangler.jsonc has no "${name}" setting. Add "${name}": "${value}" inside "vars".`);
+    config = config.replace(pattern, `$1"${value}"`);
+  }
+  writeFileSync(CONFIG_FILE, config);
 }
 
 async function ask(question) {
