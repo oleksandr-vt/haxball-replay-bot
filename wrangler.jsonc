@@ -1,26 +1,32 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "haxball-replay-bot",
-  "main": "src/index.js",
-  "compatibility_date": "2026-09-01",
-
-  "vars": {
-    // Filled in by `npm run setup`: your Discord app's ID and public key, and the bot's own address.
-    "DISCORD_APP_ID": "PASTE_APPLICATION_ID_HERE",
-    "DISCORD_PUBLIC_KEY": "PASTE_PUBLIC_KEY_HERE",
-    "PUBLIC_URL": "",
-
-    // Optional auto mode: IDs of channels where the bot replies to every new .hbr2 file by itself,
-    // separated by commas. Leave empty to turn it off. See README, step 7.
-    "AUTO_CHANNEL_IDS": ""
-  },
-
-  // Copies of the .hbr2 files (Discord's own file links expire after about a day).
-  // Created automatically on the first deploy.
-  "kv_namespaces": [{ "binding": "REPLAYS" }],
-
-  // Runs auto mode once a minute. It does nothing while AUTO_CHANNEL_IDS is empty.
-  "triggers": { "crons": ["* * * * *"] },
-
-  "observability": { "enabled": true }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "haxball-replay-bot",
+	"main": "src/index.js",
+	"compatibility_date": "2026-09-01",
+	"vars": {
+		// Filled in by `npm run setup`: your Discord app's ID and public key, and the bot's own address.
+		"DISCORD_APP_ID": "1557754704690151464",
+		"DISCORD_PUBLIC_KEY": "f86e80729ae562bfe925878e3093ce522fc22b0b0db5f7f7bdfb17daba4f7246",
+		"PUBLIC_URL": "https://haxball-replay-bot.sinch-haxball.workers.dev",
+		// Optional auto mode: IDs of channels where the bot replies to every new .hbr2 file by itself,
+		// separated by commas. Leave empty to turn it off. See README, step 7.
+		"AUTO_CHANNEL_IDS": "1521230294173090025"
+	},
+	// Copies of the .hbr2 files (Discord's own file links expire after about a day).
+	// Created automatically on the first deploy.
+	"kv_namespaces": [
+		{
+			"binding": "REPLAYS",
+			"id": "e7f5ff5aa34e49d78d9a13a1d192f9f7"
+		}
+	],
+	// Runs auto mode once a minute. It does nothing while AUTO_CHANNEL_IDS is empty.
+	"triggers": {
+		"crons": [
+			"* * * * *"
+		]
+	},
+	"observability": {
+		"enabled": true
+	}
 }

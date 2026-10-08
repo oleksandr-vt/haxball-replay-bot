@@ -108,9 +108,9 @@ The bot replies to every new `.hbr2` file in chosen channels without anyone clic
    ```jsonc
    "AUTO_CHANNEL_IDS": "123456789012345678"
    ```
-4. Give the bot its token on Cloudflare. Paste the token when asked:
+4. Give the bot its token on Cloudflare. This uploads it straight from `.dev.vars`, so there's nothing to paste:
    ```powershell
-   npx wrangler secret put DISCORD_BOT_TOKEN
+   npm run upload-token
    ```
 5. Deploy again:
    ```powershell
@@ -167,7 +167,9 @@ See what the bot is doing: run `npm run logs` and try again. You can also check 
   - Check `npm run logs` for a minute.
   - `Missing Access`: the bot can't see the channel.
   - `Missing Permissions`: the bot needs *Send Messages* and *Embed Links* in that channel.
-  - `needs the DISCORD_BOT_TOKEN secret and PUBLIC_URL`: redo step 7.4, or run step 6 again and then `npm run deploy`.
+  - `needs the DISCORD_BOT_TOKEN secret and PUBLIC_URL`: run `npx wrangler secret list`. It must show a secret
+    named exactly `DISCORD_BOT_TOKEN`; if not, redo step 7.4. If `PUBLIC_URL` in `wrangler.jsonc` is empty,
+    run step 6 again and then `npm run deploy`.
   - The bot replies to nothing although it runs: turn on **Developer Portal → Bot → Message Content Intent**.
     Setup tries to do this for you.
 - **`429` or `1015` errors in the logs:** Discord sometimes rate-limits Cloudflare's shared servers for a moment.

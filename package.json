@@ -10,6 +10,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "setup": "node scripts/setup.mjs",
+    "upload-token": "wrangler secret bulk .dev.vars",
     "dev": "wrangler dev",
     "logs": "wrangler tail",
     "test": "node --test"
