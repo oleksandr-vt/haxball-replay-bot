@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "haxball-replay-bot",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+
+  "vars": {
+    // Your Discord app's ID and public key. `npm run setup` fills these in for you.
+    "DISCORD_APP_ID": "PASTE_APPLICATION_ID_HERE",
+    "DISCORD_PUBLIC_KEY": "PASTE_PUBLIC_KEY_HERE",
+
+    // Optional auto mode: IDs of channels where the bot answers new thehax links by itself,
+    // separated by commas. Leave empty to turn it off. See README, step 7.
+    "AUTO_CHANNEL_IDS": ""
+  },
+
+  // Copies of .hbr2 files posted straight to Discord (Discord's own file links expire after about a day).
+  // Created automatically on the first deploy.
+  "kv_namespaces": [{ "binding": "REPLAYS" }],
+
+  // Runs auto mode once a minute. It does nothing while AUTO_CHANNEL_IDS is empty.
+  "triggers": { "crons": ["* * * * *"] },
+
+  "observability": { "enabled": true }
+}

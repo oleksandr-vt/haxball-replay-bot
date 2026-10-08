@@ -1,0 +1,4 @@
+# Copy this file to .dev.vars and paste your bot token below
+# (Discord Developer Portal → your app → Bot → Reset Token).
+# .dev.vars stays on your computer only. Never share the token or commit it.
+DISCORD_BOT_TOKEN=paste-your-bot-token-here
