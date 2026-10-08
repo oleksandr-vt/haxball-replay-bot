@@ -102,6 +102,9 @@ function snowflake(minutesAgo) {
   return String(BigInt(Date.now() - minutesAgo * 60_000 - 1420070400000) << 22n);
 }
 
+// A cron run that was scheduled 54 s ago, so it has time for just one check before its minute is used up.
+const oneCheck = () => ({ scheduledTime: Date.now() - 54_000 });
+
 test('answers Discord PING', async () => {
   const { response, json } = await runInteraction({ type: 1 });
   assert.equal(response.status, 200);
@@ -206,9 +209,7 @@ test('auto mode replies to each new replay file once, after saving it', async ()
     },
   });
 
-  const ctx = makeCtx();
-  await worker.scheduled({}, env, ctx);
-  await ctx.settled();
+  await worker.scheduled(oneCheck(), env);
 
   const posts = calls.filter((call) => call.method === 'POST');
   assert.equal(posts.length, 1);
@@ -220,17 +221,39 @@ test('auto mode replies to each new replay file once, after saving it', async ()
   assert.ok(savedBeforePosting);
 });
 
+test('auto mode keeps checking during its minute and only asks for newer messages', async () => {
+  const env = makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN });
+  const answered = { id: snowflake(3), author: { id: '42' }, attachments: [attachment('5010')] };
+  const ourReply = { id: snowflake(2), author: { id: APP_ID }, message_reference: { message_id: answered.id } };
+  const posted = { id: snowflake(0), author: { id: '42' }, attachments: [attachment('5011')] };
+  const calls = mockFetch({
+    'cdn.discordapp.com': () => new Response(replayFile(3)),
+    '/channels/555/messages': (method, url) => {
+      if (method === 'POST') return Response.json({ id: '1' });
+      return Response.json(url.includes('after=') ? [posted] : [ourReply, answered]);
+    },
+  });
+
+  // Scheduled 49 s ago: time for a check now and one more 5 s later.
+  await worker.scheduled({ scheduledTime: Date.now() - 49_000 }, env);
+
+  const gets = calls.filter((call) => call.method === 'GET' && call.url.includes('/channels/555/'));
+  assert.equal(gets.length, 2);
+  assert.match(gets[1].url, new RegExp(`after=${ourReply.id}`));
+  const posts = calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.message_reference.message_id, posted.id);
+});
+
 test('auto mode skips files that are not replays', async () => {
   const fake = { id: snowflake(1), author: { id: '42' }, attachments: [attachment('5003', 'fake.hbr2')] };
   const calls = mockFetch({
     'cdn.discordapp.com': () => new Response('not a replay'),
     '/channels/555/messages': () => Response.json([fake]),
   });
-  const ctx = makeCtx();
-  await withoutErrorLogs(async () => {
-    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }), ctx);
-    await ctx.settled();
-  });
+  await withoutErrorLogs(() =>
+    worker.scheduled(oneCheck(), makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN })),
+  );
   assert.equal(calls.filter((call) => call.method === 'POST').length, 0);
 });
 
@@ -241,28 +264,20 @@ test('auto mode keeps going when one channel fails', async () => {
     '/channels/111/messages': () => new Response('Missing Access', { status: 403 }),
     '/channels/222/messages': (method) => (method === 'GET' ? Response.json([fresh]) : Response.json({ id: '1' })),
   });
-  const ctx = makeCtx();
-  await withoutErrorLogs(async () => {
-    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '111, 222', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }), ctx);
-    await ctx.settled();
-  });
+  await withoutErrorLogs(() =>
+    worker.scheduled(oneCheck(), makeEnv({ AUTO_CHANNEL_IDS: '111, 222', DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN })),
+  );
   assert.equal(calls.filter((call) => call.method === 'POST' && call.url.includes('/channels/222/')).length, 1);
 });
 
 test('auto mode does nothing when no channels are set', async () => {
   const calls = mockFetch({});
-  const ctx = makeCtx();
-  await worker.scheduled({}, makeEnv({ DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }), ctx);
-  await ctx.settled();
+  await worker.scheduled(oneCheck(), makeEnv({ DISCORD_BOT_TOKEN: 'token', PUBLIC_URL: ORIGIN }));
   assert.equal(calls.length, 0);
 });
 
 test('auto mode does nothing without PUBLIC_URL', async () => {
   const calls = mockFetch({});
-  const ctx = makeCtx();
-  await withoutErrorLogs(async () => {
-    await worker.scheduled({}, makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token' }), ctx);
-    await ctx.settled();
-  });
+  await withoutErrorLogs(() => worker.scheduled(oneCheck(), makeEnv({ AUTO_CHANNEL_IDS: '555', DISCORD_BOT_TOKEN: 'token' })));
   assert.equal(calls.length, 0);
 });

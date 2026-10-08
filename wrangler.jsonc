@@ -20,7 +20,8 @@
 			"id": "e7f5ff5aa34e49d78d9a13a1d192f9f7"
 		}
 	],
-	// Runs auto mode once a minute. It does nothing while AUTO_CHANNEL_IDS is empty.
+	// Starts auto mode once a minute; each run then checks the channels every 5 seconds.
+	// It does nothing while AUTO_CHANNEL_IDS is empty.
 	"triggers": {
 		"crons": [
 			"* * * * *"

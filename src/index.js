@@ -6,6 +6,8 @@ const KEEP_FILES_FOR_SECONDS = 365 * 24 * 60 * 60;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_REPLAYS_PER_MESSAGE = 10; // a Discord message can have at most 10 embeds
 const AUTO_REPLY_WINDOW_MS = 10 * 60 * 1000; // auto mode only answers messages from the last 10 minutes
+const POLL_EVERY_MS = 5000; // how often auto mode checks a channel for new replays
+const POLL_FOR_MS = 55_000; // a run checks for most of its minute; the next run starts 60 s after this one
 
 const EPHEMERAL = 64; // message flag: only the person who used the command sees it
 
@@ -21,8 +23,8 @@ export default {
     return new Response('Not found', { status: 404 });
   },
 
-  async scheduled(controller, env, ctx) {
-    ctx.waitUntil(autoReply(env));
+  async scheduled(controller, env) {
+    await autoReply(env, controller.scheduledTime ?? Date.now());
   },
 };
 
@@ -103,10 +105,10 @@ async function serveReplayFile(id, env) {
   });
 }
 
-// Auto mode, run once a minute by the cron trigger in wrangler.jsonc: reply to new .hbr2 files
-// in the configured channels. Already-answered messages are skipped, so if a run fails,
-// the next one simply picks up what it missed.
-async function autoReply(env) {
+// Auto mode: reply to new .hbr2 files in the configured channels. Cloudflare starts it at most once
+// a minute (the cron trigger in wrangler.jsonc), so each run keeps checking every few seconds
+// for most of that minute. A run's first check also catches up on anything an earlier run missed.
+async function autoReply(env, scheduledTime) {
   const channelIds = (env.AUTO_CHANNEL_IDS ?? '').split(/[\s,]+/).filter(Boolean);
   if (channelIds.length === 0) return;
   // There's no incoming request to learn our own address from, so auto mode needs PUBLIC_URL.
@@ -115,34 +117,52 @@ async function autoReply(env) {
     console.error('Auto mode needs the DISCORD_BOT_TOKEN secret and PUBLIC_URL in wrangler.jsonc (see README, step 7).');
     return;
   }
-  for (const channelId of channelIds) {
-    try {
-      await autoReplyInChannel(env, channelId, origin);
-    } catch (err) {
-      console.error(`Auto mode failed in channel ${channelId}:`, err);
+  const channels = channelIds.map((id) => ({ id, newestId: null, answered: new Set() }));
+  // With several channels each one is checked less often, which keeps a run within
+  // Cloudflare's free limit of 50 outgoing requests.
+  const pause = POLL_EVERY_MS * channels.length;
+  for (let pollAt = Date.now(); pollAt < scheduledTime + POLL_FOR_MS; pollAt += pause) {
+    await sleep(pollAt - Date.now());
+    for (const channel of channels) {
+      try {
+        await autoReplyInChannel(env, channel, origin);
+      } catch (err) {
+        console.error(`Auto mode failed in channel ${channel.id}:`, err);
+      }
     }
   }
 }
 
-async function autoReplyInChannel(env, channelId, origin) {
-  const messages = await discordApi(env.DISCORD_BOT_TOKEN, 'GET', `/channels/${channelId}/messages?limit=50`);
+async function autoReplyInChannel(env, channel, origin) {
+  // The first check reads the recent history. Later checks only ask for messages newer than the
+  // newest one seen, so they're tiny and stay well within the free plan's CPU limit.
+  const query = channel.newestId ? `after=${channel.newestId}&limit=50` : 'limit=50';
+  const messages = await discordApi(env.DISCORD_BOT_TOKEN, 'GET', `/channels/${channel.id}/messages?${query}`);
+  messages.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1)); // oldest first
+  if (messages.length > 0) channel.newestId = messages.at(-1).id;
+
   const isOurs = (message) => message.author.id === env.DISCORD_APP_ID;
-  const answered = new Set(messages.filter(isOurs).map((message) => message.message_reference?.message_id));
+  for (const message of messages.filter(isOurs)) channel.answered.add(message.message_reference?.message_id);
   const cutoff = Date.now() - AUTO_REPLY_WINDOW_MS;
 
-  for (const message of messages.toReversed()) { // oldest first
-    if (isOurs(message) || answered.has(message.id) || snowflakeTime(message.id) < cutoff) continue;
+  for (const message of messages) {
+    if (isOurs(message) || channel.answered.has(message.id) || snowflakeTime(message.id) < cutoff) continue;
     const files = findReplayFiles(message);
     if (files.length === 0) continue;
     const replays = await downloadReplays(files, origin, 10_000);
     if (replays.length === 0) continue;
     await saveReplays(replays, env); // the copies must exist before anyone can click the link
-    await discordApi(env.DISCORD_BOT_TOKEN, 'POST', `/channels/${channelId}/messages`, {
+    await discordApi(env.DISCORD_BOT_TOKEN, 'POST', `/channels/${channel.id}/messages`, {
       embeds: replayEmbeds(replays),
       message_reference: { message_id: message.id, fail_if_not_exists: false },
       allowed_mentions: { parse: [] },
     });
+    channel.answered.add(message.id);
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
 function textReply(content, flags = 0) {

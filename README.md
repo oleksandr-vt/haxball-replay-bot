@@ -7,7 +7,7 @@ official **haxball.com replayer**. The reply is an embed whose title is the link
 
 - **Right-click a message with an `.hbr2` file → Apps → Watch replay.** Works in any server or DM.
 - **Auto mode (optional):** the bot replies to every new `.hbr2` file in your replay channels by itself,
-  within about a minute.
+  usually within a few seconds.
 
 **No server needed.** The bot runs on Cloudflare Workers' free plan. Nothing has to stay on, your PC included.
 You don't need a credit card, and you won't pay anything.
@@ -117,7 +117,7 @@ The bot replies to every new `.hbr2` file in chosen channels without anyone clic
    npm run deploy
    ```
 
-Now post a replay in that channel. Within a minute the bot replies to it with the link.
+Now post a replay in that channel. Within a few seconds the bot replies to it with the link.
 
 ---
 
@@ -136,9 +136,13 @@ haxball.com opens its replayer and downloads the replay from the address after t
   keeps a copy for a year (Cloudflare KV storage), and serves it from `/r/<file-id>.hbr2`.
 - **`v=3`** is the replay format version. The bot reads it from the file, so old replays open in the right replayer.
 - **Several replays in one message:** the bot sends one link per replay, each labeled with its file name.
-- **Auto mode:** Cloudflare runs the bot once a minute. It reads the last 50 messages of each auto-mode
-  channel and replies to `.hbr2` files from the last 10 minutes that it hasn't answered yet.
-  If one run fails, the next one catches up.
+- **Auto mode:** Cloudflare can start the bot at most once a minute, so each run keeps checking the
+  auto-mode channels every 5 seconds for 55 seconds. Replies usually take under 5 seconds, and up to
+  about 10 seconds around the moment one run hands over to the next. A run's first check reads the last
+  50 messages and replies to `.hbr2` files from the last 10 minutes that haven't been answered yet,
+  so if a run fails, the next one catches up. With several auto-mode channels, each one is checked less often
+  (every 10 seconds for two channels, every 15 for three) to stay within the free plan.
+  To change the speed, edit `POLL_EVERY_MS` in `src/index.js`.
 - **The bot shows as offline in the member list.** That's normal: it only wakes up when needed.
 
 **Changing the texts:** the link text and color are at the top of `src/replays.js`.
@@ -149,7 +153,8 @@ After changing them, run `npm run deploy`.
 
 Everything fits in Cloudflare's free plan: 100,000 requests per day, plus 1 GB of KV storage with
 1,000 writes and 100,000 reads per day. A replay file is about 100 KB, so 1 GB holds about 10,000 replays,
-and each copy is deleted after a year. Auto mode uses 1,440 runs a day, one per minute.
+and each copy is deleted after a year. Auto mode uses 1,440 runs a day, one per minute. While they wait
+between checks, runs use almost no CPU.
 
 ## Troubleshooting
 
